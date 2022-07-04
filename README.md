@@ -1,113 +1,106 @@
-# Korean FastSpeech 2 - Pytorch Implementation
+# FastSpeech2 메뉴얼
 
-![](./assets/model.png)
-# Introduction
+# 1. Install Requirements
 
-최근 딥러닝 기반 음성합성 기술이 발전하며, 자기회귀적 모델의 느린 음성 합성 속도를 개선하기 위해 비자기회귀적 음성합성 모델이 제안되었습니다. FastSpeech2는 비자기회귀적 음성합성 모델들 중 하나로, Montreal Forced Aligner(M. McAuliffe et.al., 2017)에서 phoneme(text)-utterance alignment를 추출한 duration 정보를 학습하고, 이를 바탕으로 phoneme별 duration을 예측합니다. 예측된 duration을 바탕으로 phoneme-utterance alignment가 결정되고 이를 바탕으로 phoneme에 대응되는 음성이 생성됩니다. 그러므로, FastSpeech2를 학습시키기 위해서는 MFA에서 학습된 phoneme-utterance alignment 정보가 필요합니다.
+가상 환경 설정에 앞서 부가적으로 설치해야 하는 항목들이 있습니다.
 
-이 프로젝트는 Microsoft의 [**FastSpeech 2(Y. Ren et. al., 2020)**](https://arxiv.org/abs/2006.04558)를 [**Korean Single Speech dataset (이하 KSS dataset)**](https://www.kaggle.com/bryanpark/korean-single-speaker-speech-dataset)에서 동작하도록 구현한 것입니다. 본 소스코드는 ming024님의 [FastSpeech2](https://github.com/ming024/FastSpeech2) 코드를 기반으로 하였고, [Montreal Forced Aligner](https://github.com/MontrealCorpusTools/Montreal-Forced-Aligner)를 이용하여 duration 을 추출해 구현되었습니다.
+## 1-0. virtual environment
 
-본 프로젝트에서는 아래와 같은 contribution을 제공합니다.
-* kss dataset에 대해 동작하게 만든 소스코드
-* Montreal Forced Aligner로부터 추출한 kss dataset의 text-utterance duration 정보 (TextGrid)
-* kss dataset에 대해 학습한 FastSpeech2(Text-to-melspectrogram network) pretrained model
-* kss dataset에 대해 학습한 [VocGAN](https://arxiv.org/pdf/2007.15256.pdf)(Neural vocoder)의 pretrained model
+파이썬 버전과 dependency를 위해 anaconda / python virtual env를 사용한 가상환경 사용을 추천드립니다.
 
-# Install Dependencies
+가상환경 생성 시 python==3.7, pytorch==1.6을 미리 설정해 생성하는 것을 추천드립니다.
 
-먼저 python=3.7, [pytorch](https://pytorch.org/)=1.6, [ffmpeg](https://ffmpeg.org/)와 [g2pk](https://github.com/Kyubyong/g2pK)를 설치합니다.
-```
-# ffmpeg install
+## 1-1. ffmpeg
+
+ffmpeg은 비디오, 오디오 데이터를 다루는 프로그램으로 리눅스 환경이라면 아래 커맨드로 간단히 설치가 가능합니다.
+
+```python
 sudo apt-get install ffmpeg
-
-# [WARNING] g2pk를 설치하시기 전에, g2pk github을 참조하셔서 g2pk의 dependency를 설치하시고 g2pk를 설치하시기 바랍니다.
-pip install g2pk
 ```
 
-다음으로, 필요한 모듈을 pip를 이용하여 설치합니다.
-```
+window 환경은 아래 블로그를 참조해 주시기 바랍니다.
+
+[FFMPEG 설치하기 - 윈도우(Windows)편 2020년 9월 18일 이후](https://m.blog.naver.com/chandong83/222095346417)
+
+## 1-2. g2pk
+
+g2pk는 한국어 텍스트에서 grapheme to phoneme 변환을 담당하는 라이브러리입니다.
+
+pip로도 설치가 가능하지만, 환경이나 버전에 따라 해당 라이브러리에 필요한 mecab-ko 패키지에서 에러가 나는 경우가 발생합니다.
+
+mecab-ko 패키지는 pip에서도 불안정하기 때문에, 수동으로 설치하는 것을 권장드립니다.
+
+완벽한 설치 과정은 다음과 같습니다: mecab-ko 설치 → mecab-ko-dic 설치 [Bitbucket](https://bitbucket.org/eunjeon/mecab-ko-dic/src/master/)
+
+## 1-3. python requirements
+
+위 설치가 모두 완료되었다면 파이썬 패키지 설치로 준비는 완료됩니다.
+
+```python
 pip install -r requirements.txt
 ```
 
-**[WARNING] anaconda 가상환경을 사용하시는 것을 권장드립니다.**
+# 2. Preprocessing
 
+## 2-1. Dataset Preparation
 
-# Preprocessing
+학습에 필요한 데이터셋은 문장에 대한 텍스트 파일과 문장을 발화하는 오디오 파일 pair이 필요합니다. Public dataset은 LJSpeech(영어)와 Korean Single Speaker (KSS) (한국어)가 대표적입니다. 
 
-**(1) kss dataset download**
-* [Korean-Single-Speech dataset](https://www.kaggle.com/bryanpark/korean-single-speaker-speech-dataset): 12,853개(약 12시간)의 샘플로 구성된 한국어 여성 단일화자 발화 dataset입니다.
+커스텀 데이터셋으로 학습할 경우 text-audio pair만 잘 이루어져 있다면 다음 단계에서 alignment 진행 후 바로 학습시킬 수 있습니다.
 
-dataset을 다운로드 하신 후, 압축을 해제하시고 ``hparams.py``에 있는 ``data_path``에 다운받은 kss dataset의 경로를 기록해주세요.
+데이터셋이 준비되었다면 [hparams.py](http://hparams.py) 파일에서 “dataset” 변수를 임의로 바꾸어 주시고 “data_path” 변수에 데이터셋의 경로를 알맞게 변경해 주시면 됩니다.
 
-**(2) phoneme-utterance sequence간 alignment 정보 download**
+## 2-2. Alignment Preparation
 
-* KSS ver.1.3. ([download](https://drive.google.com/file/d/1bq4DzgzuxY2uo6D_Ri_hd53KLnmU-mdI/view?usp=sharing))
-* KSS ver.1.4. ([download](https://drive.google.com/file/d/1LgZPfWAvPcdOpGBSncvMgv54rGIf1y-H/view?usp=sharing))
+음성 데이터 학습에 앞서, speech-text pair에 대한 전처리가 필요합니다.
 
-FastSpeech2를 학습하기 위해서는 [Montreal Forced Aligner](https://montreal-forced-aligner.readthedocs.io/en/latest/)(MFA)에서 추출된 utterances와 phoneme sequence간의 alignment가 필요합니다. kss dataset에 대한 alignment 정보(TextGrid)는 위의 링크에서 다운로드 가능합니다. 다운 받은 ```TextGrid.zip```파일을 ``프로젝트 폴더 (Korean-FastSpeech2-Pytorch)``에 두시면 됩니다. 
+FastSpeech2는 utterance와 phoneme sequence간의 alignment(TextGrid)가 필요합니다. 이는 Montreal Forced Aligner (MFA)를 사용해 진행할 수 있습니다.
 
-***KSS dataset에 적용된 License로 인해 kss dataset에서 추출된 TextGrid를 상업적으로 사용하는 것을 금합니다.**
+저자는 Korean Single Speaker (KSS) dataset을 사용했으며, 해당 데이터셋은 MFA를 사용한 alignment가 공개되어 있습니다.
 
-**(3) 데이터 전처리**
-```
+- KSS ver.1.3. ([download](https://drive.google.com/file/d/1bq4DzgzuxY2uo6D_Ri_hd53KLnmU-mdI/view))
+- KSS ver.1.4. ([download](https://drive.google.com/file/d/1LgZPfWAvPcdOpGBSncvMgv54rGIf1y-H/view))
+
+TextGrid가 준비되었다면 preprocessed/${dataset_name} 경로에 파일명을 TextGrid.zip으로 바꿔 옮겨 두시면 됩니다. (압축 해제는 스크립트에서 자동으로 진행합니다.)
+
+## 2-3. Preprocessing
+
+위 과정이 모두 완료되었다면 전처리 스크립트를 실행합니다.
+
+```python
 python preprocess.py
 ```
-data 전처리를 위해 위의 커맨드를 입력해 주세요. 전처리 된 데이터는 프로젝트 폴더의 ``preprocessed/`` 폴더에 생성됩니다.
 
-    
-# Train
-모델 학습 전에, kss dataset에 대해 사전학습된 VocGAN(neural vocoder)을 [다운로드](https://drive.google.com/file/d/1GxaLlTrEhq0aXFvd_X1f4b-ev7-FH8RB/view?usp=sharing) 하여 ``vocoder/pretrained_models/`` 경로에 위치시킵니다.
+위 커맨드를 실행하면 전처리된 데이터가 ./preprocessed 경로에 저장됩니다.
 
-다음으로, 아래의 커맨드를 입력하여 모델 학습을 수행합니다.
-```
+# 3. Training
+
+학습에 앞서, 스펙트로그램을 오디오로 변환시키는 neural vocoder이 필요합니다.
+
+사내에서 학습시킨 vocoder을 사용하시거나, pretrained vocoder model을 다운받아 사용하시면 됩니다.
+
+준비된 vocoder 파일은 ./vocoder/pretrained_models/ 경로에 추가해 주시면 됩니다.
+
+```python
 python train.py
 ```
-학습된 모델은 ``ckpt/``에 저장되고 tensorboard log는 ``log/``에 저장됩니다. 학습시 evaluate 과정에서 생성된 음성은 ``eval/`` 폴더에 저장됩니다.
 
-# Synthesis
-학습된 파라미터를 기반으로 음성을 생성하는 명령어는 다음과 같습니다. 
+모델 학습은 위와 같이 간단한 커맨드로 시작할 수 있고, hyperparameter을 수정해야 한다면 [hparams.py](http://hparams.py)에서 수정한 후 학습해야 합니다.
+
+### Tensorboard
+
+해당 코드는 학습 로그를 텐서보드로 확인할 수 있도록 제작되었습니다. logdir은 ./log/${hp.dataset}/ 경로로 설정한 후 트래킹할 수 있습니다 (hparams.py에서 변경 가능).
+
+```python
+tensorboard --logdir=log/${hp.dataset}/
 ```
-python synthesis.py --step 500000
+
+# 4. Synthesis
+
+학습된 모델로 원하는 텍스트에 대해 오디오를 생성하고 싶은 경우 [synthesis.py](http://synthesis.py)를 사용하시면 됩니다. 학습된 모델은 training step마다 ./ckpt/ 경로에 저장되고 학습 중 evaluate 과정에서 생성된 음성은 ./eval/ 경로에 저장됩니다. 
+
+```python
+python synthesis.py --step ${n_training_step}
 ```
-합성된 음성은  ```results/``` directory에서 확인하실 수 있습니다.
 
-# Pretrained model
-pretrained model(checkpoint)을 [다운로드](https://drive.google.com/file/d/1qkFuNLqPIm-A5mZZDPGK1mnp0_Lh00PN/view?usp=sharing)해 주세요.
-그 후,  ```hparams.py```에 있는 ```checkpoint_path``` 변수에 기록된 경로에 위치시켜주시면 사전학습된 모델을 사용 가능합니다.
-
-# Tensorboard
-```
-tensorboard --logdir log/hp.dataset/
-```
-tensorboard log들은 ```log/hp.dataset/``` directory에 저장됩니다. 그러므로 위의 커멘드를 이용하여 tensorboard를 실행해 학습 상황을 모니터링 하실 수 있습니다.
-
-
-# Train and synthesis results
-- 합성된 음성 샘플
-
-**FastSpeech2가 생성한 오디오 sample은 [여기](https://soundcloud.com/7vwcti7og4fp/sets/korean-fastspeech2-improved-speech-quality)에서 들으실 수 있습니다.**
-
-- 학습 과정 시각화
-![](./assets/tensorboard.png)
-
-- 합성시 생성된 melspectrogram과 예측된 f0, energy values
-![](./assets/melspectrogram.png)
-
-
-# Issues and TODOs
-- [완료] pitch, energy loss가 total loss의 대부분을 차지하여 개선 중에 있음.
-- [완료] 생성된 음성에서의 기계음 문제
-- [완료] pretrained model 업로드
-- [완료] vocoder의 기계음 및 noise 감소
-- [other issues](https://github.com/ming024/FastSpeech2) from ming024's implementation
-
-
-# Acknowledgements
-We specially thank to ming024 for providing FastSpeech2 pytorch-implentation. This work is mostly based on **the undergraduate researcher, Joshua-1995(김성재)**'s efforts. We also thank to him for his devotion.
-
-
-# References
-- [FastSpeech 2: Fast and High-Quality End-to-End Text to Speech](https://arxiv.org/abs/2006.04558), Y. Ren, *et al*.
-- [FastSpeech: Fast, Robust and Controllable Text to Speech](https://arxiv.org/abs/1905.09263), Y. Ren, *et al*.
-- [ming024's FastSpeech2 impelmentation](https://github.com/ming024/FastSpeech2)
-- [rishikksh20's VocGAN implementation](https://github.com/rishikksh20/VocGAN)
+training step을 파라미터로 입력하고 synthesis를 진행한다면 커맨드라인에서 텍스트를 입력하는 파이프라인으로 구성되어 있습니다.
